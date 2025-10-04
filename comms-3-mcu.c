@@ -3,7 +3,9 @@
 // A Pico2 is the DAQ-MCU.
 //
 // Peter J.
-// 2025-04-07 First cut is to adapt the COMMS-2 firmware from the PIC18f16Q41
+// 2025-10-07 First cut is to adapt the COMMS-2 firmware from the PIC18f16Q41
+// 2025-10-04 Edit PCB tracks so that we can use negative-channel inputs to 
+//            comparators 1 and 2 for the internal and external trigger signals.
 //
 // CONFIG1
 #pragma config FEXTOSC = OFF
@@ -71,7 +73,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VERSION_STR "v0.1 PIC18F26Q71 COMMS-3-MCU 2025-10-03"
+#define VERSION_STR "v0.2 PIC18F26Q71 COMMS-3-MCU 2025-10-04"
 
 // Each device on the RS485 network has a unique single-character identity.
 // The master (PC) has identity '0'. Slave nodes may be 1-9A-Za-z.
@@ -243,9 +245,8 @@ uint8_t enable_comparator(uint8_t level, int8_t slope)
     DAC2DATL = level;
     __delay_ms(1);
     //
-    // Our external signal goes into the noninverting input of the comparator.
-    // To use the DAC2 output as the reference, we need to feed the external
-    // signal into the inverting output.
+    // Our external signal goes into the inverting input of the comparator
+    // and we use the DAC2 output as the reference on the noninverting input.
     CM1NCH = 0b001; // C1IN1- pin
     CM1PCH = 0b100; // DAC2_Output
     if (slope) {

@@ -1,16 +1,16 @@
 Pin allocations for PIC18F26Q71-I/SP COMMS-3-MCU talking to Pico2 DAQ-MCU
-PJ 2025-10-03
+PJ 2025-10-03, 2025-10-04
 
                  PIC18F26Q71
                 +-----v-----+
 MCLRn         1 | RE3   RB7 | 28       ICSPDAT
 VA/2          2 | RA0   RB6 | 27       ICSPCLK
-NC/OPA1OUT    3 | RA1   RB5 | 26   Pico2_RESET
-EXT_TRIG      4 | RA2   RB4 | 25   Pico2_READY
+EXT_TRIG      3 | RA1   RB5 | 26   Pico2_RESET
+NC            4 | RA2   RB4 | 25   Pico2_READY
 RA3           5 | RA3   RB3 | 24        EVENTn
 RA4           6 | RA4   RB2 | 23           RX2
-RA5           7 | RA5   RB1 | 22           TX2
-GND           8 | VSS   RB0 | 21      INT_TRIG
+RA5           7 | RA5   RB1 | 22      INT_TRIG
+GND           8 | VSS   RB0 | 21           TX2
 Pico2_EVENT   9 | RA7   VDD | 20         V_PIC
 RA6          10 | RA6   VSS | 19           GND
 SDI1         11 | RC0   RC7 | 18           RX1
@@ -19,5 +19,5 @@ SCK1         13 | RC2   RC5 | 16           TX1
 I2C_SCL      14 | RC3   RC4 | 15       I2C_SDA
                 +-----------+
 
-Notes:
+Notes: On PCB Rev.1, swap RA1+RA2  and RB0+RB1.
 

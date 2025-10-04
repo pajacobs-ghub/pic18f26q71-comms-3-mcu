@@ -149,19 +149,19 @@ void uart2_init(long baud)
     // We do not use hardware flow control.
     unsigned int brg_value;
     //
-    // Configure PPS RX2=RB2, TX2=RB1 
+    // Configure PPS RX2=RB2, TX2=RB0 
     GIE = 0;
     PPSLOCK = 0x55;
     PPSLOCK = 0xaa;
     PPSLOCKED = 0;
     U2RXPPS = 0b001010; // RB2
-    RB1PPS = 0x18; // UART2 TX
+    RB0PPS = 0x18; // UART2 TX
     U2CTSPPS = 0b011010; // RD2 does not exist and should always read as 0
     PPSLOCK = 0x55;
     PPSLOCK = 0xaa;
     PPSLOCKED = 1;
-    ANSELBbits.ANSELB1 = 0; // TX2 on RB4 pin
-    TRISBbits.TRISB1 = 0; // output
+    ANSELBbits.ANSELB0 = 0; // TX2 on RB4 pin
+    TRISBbits.TRISB0 = 0; // output
     ANSELBbits.ANSELB2 = 0; // Turn on digital input buffer for RX2
     TRISBbits.TRISB2 = 1; // RX2 on RB5 is an input
     //
