@@ -74,7 +74,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VERSION_STR "v0.3 PIC18F26Q71 COMMS-3-MCU 2025-11-09"
+#define VERSION_STR "v0.4 PIC18F26Q71 COMMS-3-MCU 2025-11-10"
 
 // Each device on the RS485 network has a unique single-character identity.
 // The master (PC) has identity '0'. Slave nodes may be 1-9A-Za-z.
@@ -86,6 +86,7 @@
 #define LED (LATAbits.LATA6)
 uint8_t override_led = 0;
 #define PICO2_READY_PIN (PORTBbits.RB4)
+// The following is for sensing the EVENTn pin.
 #define EVENTn_PIN (PORTBbits.RB3)
 #define PICO2_RESETn_PIN (LATBbits.LATB5)
 
@@ -108,53 +109,18 @@ void init_pins()
     TRISBbits.TRISB5 = 0;
     ANSELBbits.ANSELB5 = 0;
     //
-    // RA2 as analog-in for external trigger.
-    //
-    // Combine the Pico2-EVENT (RA7) signal with the comparator-latch signal
-    // and output the result to the system EVENTn line (RB3).
+    // RB3/EVENTn line is initially for reading only.
+    // Later it may be driven low by software command or
+    // it may be driven by hardware (comparator latched by CLC1).
     // We will also be sensing the EVENTn line to see if other devices
     // have pulled the line low to indicate the event.
-    // Later, it may be driven by this MCU, on software command.
     ANSELBbits.ANSELB3 = 0;
-    ODCONBbits.ODCB3 = 1;
-    LATBbits.LATB3 = 1;
-    TRISBbits.TRISB3 = 0; // output to EVENTn line
-    ANSELAbits.ANSELA7 = 0; // digital input buffer enabled for Pico2_EVENT
-    TRISAbits.TRISA7 = 1; // input from Pico2
-    // Use CLC3 to to combine the event signals.
-    // Follow the set-up description in Section 22.6 of data sheet.
-    CLCSELECT = 0b10; // To select CLC3 registers for the following settings.
-    CLCnCONbits.EN = 0; // Disable while setting up.
-    // Data select from outside world
-    CLCnSEL0 = 0x01; // data1 gets CLCIN1PPS as input (Pico2-EVENT)
-    CLCnSEL1 = 0x01; // data2 gets CLCIN1PPS as input, also
-    CLCnSEL2 = 0x25; // data3 gets CLC1 (comparator latch)
-    CLCnSEL3 = 0x25; // data4 gets CLC1, also
-    // Logic select into gates
-    CLCnGLS0 = 0b00000010; // data1 goes through true to gate 1
-    CLCnGLS1 = 0b00001000; // data2 goes through true to gate 2
-    CLCnGLS2 = 0b00100000; // data3 goes through true to gate 3
-    CLCnGLS3 = 0b10000000; // data4 goes through true to gate 4
-    // Gate output polarities
-    CLCnPOLbits.G1POL = 0;
-    CLCnPOLbits.G2POL = 0;
-    CLCnPOLbits.G3POL = 0;
-    CLCnPOLbits.G4POL = 0;
-    // Logic function is AND-OR
-    CLCnCONbits.MODE = 0b000;
-    CLCnPOLbits.POL = 1; // Invert output; EVENT# is active low.
-    // Connect CLC3 to the CLC1 and RB7 pin.
-    GIE = 0;
-    PPSLOCK = 0x55;
-    PPSLOCK = 0xaa;
-    PPSLOCKED = 0;
-    CLCIN1PPS = 0b000111; // RA7 for Pico2_EVENT
-    RB3PPS = 0x03; // CLC3OUT to EVENTn_PIN
-    PPSLOCK = 0x55;
-    PPSLOCK = 0xaa;
-    PPSLOCKED = 1;
-    // Now that the connections are made and function selected, enable it.
-    CLCnCONbits.EN = 1;
+    TRISBbits.TRISB3 = 1; // input EVENTn line
+    //
+    // We will ignore Pico2_EVENT, 
+    // but still set it up as a digital input.
+    ANSELAbits.ANSELA7 = 0;
+    TRISAbits.TRISA7 = 1;
     //
     return;
 }
@@ -162,17 +128,16 @@ void init_pins()
 static inline void assert_event_pin()
 {
     // Actively pull the event pin low.
-    // Of course, this will not work if the CLC3 has control of RB3.
     LATBbits.LATB3 = 0;
+    ODCONBbits.ODCB3 = 1;
+    TRISBbits.TRISB3 = 0; // output EVENTn line
 }
 
 static inline void release_event_pin()
 {
     // Release the drive on the pin and allow it to be pulled high.
-    // Should not be used if CLC3 has control of RB3.
-    CLCSELECT = 0b10; // To select CLC3 registers for the following settings.
-    CLCnCONbits.EN = 0; // Disable CLC3.
     LATBbits.LATB3 = 1;
+    TRISBbits.TRISB3 = 1; // input EVENTn line
 }
 
 void FVR_init()
@@ -258,6 +223,7 @@ uint8_t enable_external_trigger(uint8_t level, int8_t slope)
     CM1NCH = 0b001; // C1IN1- pin
     CM1PCH = 0b100; // DAC2_Output
     if (slope) {
+        // Invert comparator output-polarity to get trigger on positive slope.
         CM1CON0bits.POL = 1;
     } else {
         CM1CON0bits.POL = 0;
@@ -275,7 +241,7 @@ uint8_t enable_external_trigger(uint8_t level, int8_t slope)
     // Use CLC1 to latch the comparator output.
     //
     // Follow the set-up description in Section 22.6 of datasheet.
-    CLCSELECT = 0b00; // To select CLC1 registers for the following settings.
+    CLCSELECT = 0b000; // To select CLC1 registers for the following settings.
     CLCnCONbits.EN = 0; // Disable while setting up.
     // Data select from outside world
     CLCnSEL0 = 0x20; // data1 gets CMP1_OUT as input
@@ -294,23 +260,21 @@ uint8_t enable_external_trigger(uint8_t level, int8_t slope)
     CLCnPOLbits.G4POL = 0;
     // Logic function is S-R latch
     CLCnCONbits.MODE = 0b011;
-    CLCnPOLbits.POL = 0;
-    // We don't directly connect the output of this latch to the 
-    // outside world but combine it with the Pico2-EVENT signal
-    // using CLC3, which was set up just after reset.
-    //
+    CLCnPOLbits.POL = 1; // Invert output; EVENT# is active low.
     // Now that the S-R latch is set up, enable it.
     CLCnCONbits.EN = 1;
+    // Connect CLC1OUT to the RB3 pin.
+    ODCONBbits.ODCB3 = 1;
+    TRISBbits.TRISB3 = 0; // output
+    GIE = 0;
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xaa;
+    PPSLOCKED = 0;
+    RB3PPS = 0x01; // CLC1OUT to EVENTn_PIN
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xaa;
+    PPSLOCKED = 1;
     return 0; // Success is presumed.
-}
-
-void disable_external_trigger()
-{
-    CLCSELECT = 0b00; // To select CLC1 for the following setting.
-    CLCnCONbits.EN = 0;
-    CM1CON0bits.EN = 0;
-    DAC2CONbits.EN = 0;
-    return;
 }
 
 uint8_t enable_internal_trigger(uint8_t level, int8_t slope)
@@ -343,6 +307,7 @@ uint8_t enable_internal_trigger(uint8_t level, int8_t slope)
     CM2NCH = 0b011; // C2IN3- pin
     CM2PCH = 0b100; // DAC2_Output
     if (slope) {
+        // Invert comparator output-polarity to get trigger on positive slope.
         CM2CON0bits.POL = 1;
     } else {
         CM2CON0bits.POL = 0;
@@ -360,7 +325,7 @@ uint8_t enable_internal_trigger(uint8_t level, int8_t slope)
     // Use CLC1 to latch the comparator output.
     //
     // Follow the set-up description in Section 22.6 of datasheet.
-    CLCSELECT = 0b00; // To select CLC1 registers for the following settings.
+    CLCSELECT = 0b000; // To select CLC1 registers for the following settings.
     CLCnCONbits.EN = 0; // Disable while setting up.
     // Data select from outside world
     CLCnSEL0 = 0x21; // data1 gets CMP2_OUT as input
@@ -379,22 +344,42 @@ uint8_t enable_internal_trigger(uint8_t level, int8_t slope)
     CLCnPOLbits.G4POL = 0;
     // Logic function is S-R latch
     CLCnCONbits.MODE = 0b011;
-    CLCnPOLbits.POL = 0;
-    // We don't directly connect the output of this latch to the 
-    // outside world but combine it with the Pico2-EVENT signal
-    // using CLC3, which was set up just after reset.
-    //
+    CLCnPOLbits.POL = 1; // Invert output; EVENT# is active low.
     // Now that the S-R latch is set up, enable it.
     CLCnCONbits.EN = 1;
+    // Connect CLC1OUT to the RB3 pin.
+    ODCONBbits.ODCB3 = 1;
+    TRISBbits.TRISB3 = 0; // output
+    GIE = 0;
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xaa;
+    PPSLOCKED = 0;
+    RB3PPS = 0x01; // CLC1OUT to EVENTn_PIN
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xaa;
+    PPSLOCKED = 1;
     return 0; // Success is presumed.
 }
 
-void disable_internal_trigger()
+void disable_hardware_trigger()
 {
+    // Disables either/both internal and external triggers.
+    TRISBbits.TRISB3 = 1; // input
     CLCSELECT = 0b00; // To select CLC1 for the following setting.
     CLCnCONbits.EN = 0;
+    CM1CON0bits.EN = 0;
     CM2CON0bits.EN = 0;
     DAC2CONbits.EN = 0;
+    // Reconnect LATB to the RB3 pin,
+    // so we may drive EVENTn via software.
+    GIE = 0;
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xaa;
+    PPSLOCKED = 0;
+    RB3PPS = 0x00; // LATB3 to EVENTn_PIN
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xaa;
+    PPSLOCKED = 1;
     return;
 }
 
@@ -484,6 +469,7 @@ void interpret_RS485_command(char* cmdStr)
             break;
         case 't':
             // Software trigger to assert EVENTn line low.
+            disable_hardware_trigger(); // Can enable only one at a time.
             assert_event_pin();
             nchar = snprintf(bufB, NBUFB, "/0t Software trigger#\n");
             uart1_putstr(bufB);
@@ -558,7 +544,7 @@ void interpret_RS485_command(char* cmdStr)
                 if (token_ptr) {
                     slope = (int8_t) atoi(token_ptr);
                 }
-                disable_internal_trigger(); // Can enable only one at a time.
+                disable_hardware_trigger(); // Can enable only one at a time.
                 uint8_t flag = enable_external_trigger((uint8_t)level, slope);
                 if (flag) {
                     nchar = snprintf(bufB, NBUFB, "/0e error: comparator already triggered#\n");
@@ -586,7 +572,7 @@ void interpret_RS485_command(char* cmdStr)
                 if (token_ptr) {
                     slope = (int8_t) atoi(token_ptr);
                 }
-                disable_external_trigger(); // Can enable only one at a time.
+                disable_hardware_trigger(); // Can enable only one at a time.
                 uint8_t flag = enable_internal_trigger((uint8_t)level, slope);
                 if (flag) {
                     nchar = snprintf(bufB, NBUFB, "/0i error: comparator already triggered#\n");
@@ -600,11 +586,10 @@ void interpret_RS485_command(char* cmdStr)
             uart1_putstr(bufB);
             break;
         case 'd':
-            // Disable triggers and, maybe, release the EVENTn line.
-            // The state of the EVENTn line also depends on Pico2-EVENT.
-            disable_external_trigger();
-            disable_internal_trigger();
-            nchar = snprintf(bufB, NBUFB, "/0d Disable triggers#\n");
+            // Disable triggers and release the EVENTn line.
+            disable_hardware_trigger();
+            release_event_pin();
+            nchar = snprintf(bufB, NBUFB, "/0d Disable hardware triggers#\n");
             uart1_putstr(bufB);
             break;
             break;
