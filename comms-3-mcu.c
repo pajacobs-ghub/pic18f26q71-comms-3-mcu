@@ -75,28 +75,27 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VERSION_STR "v0.5 PIC18F26Q71 COMMS-3-MCU 2025-11-11"
+#define VERSION_STR "v0.6 PIC18F26Q71 COMMS-3-MCU 2025-11-12"
 
 // Each device on the RS485 network has a unique single-character identity.
 // The master (PC) has identity '0'. Slave nodes may be 1-9A-Za-z.
 // When programming each device, select a suitable value for MYID.
 #define MYID 'E'
 
-// RA6 is brought out to AFE Management header,
-// so it is sort of convenient us use it as our debugging LED. 
-#define LED (LATAbits.LATA6)
-uint8_t override_led = 0;
+// The following definitions are for sensing.
 #define PICO2_READY_PIN (PORTBbits.RB4)
-// The following is for sensing the EVENTn pin.
 #define EVENTn_PIN (PORTBbits.RB3)
+
+// The following definition is for output.
 #define PICO2_RESETn_PIN (LATBbits.LATB5)
 
 void init_pins()
 {
-    // RA6 as digital-output for LED.
-    LED = 0;
-    TRISAbits.TRISA6 = 0;
+    // Utility bits RA6, RA5 RA4 and RA3 are all digital.
     ANSELAbits.ANSELA6 = 0;
+    ANSELAbits.ANSELA5 = 0;
+    ANSELAbits.ANSELA4 = 0;
+    ANSELAbits.ANSELA3 = 0;
     //
     // RB4 as digital-input for DAQ-MCU Ready/Busy# signal.
     TRISBbits.TRISB4 = 1;
@@ -181,6 +180,12 @@ void ADC_init()
     ADNCH = 0b1110111; // select VSS
     ADPCH = 0x00; // select RA0/ANA0
     ADCON0bits.ON = 1; // power on the device
+    return;
+}
+
+void ADC_select(uint8_t byte_value)
+{
+    ADPCH = byte_value;
     return;
 }
 
@@ -388,6 +393,57 @@ void disable_hardware_trigger()
     return;
 }
 
+uint8_t read_utility_pins()
+{
+    // Although the pins happen to be grouped together in the current design,
+    // we'll set the bits one at a time, in case we ever reassign them.
+    uint8_t bits = 0;
+    if (PORTAbits.RA6) bits |= 0b1000;
+    if (PORTAbits.RA5) bits |= 0b0100;
+    if (PORTAbits.RA4) bits |= 0b0010;
+    if (PORTAbits.RA3) bits |= 0b0001;
+    return bits;
+}
+
+void write_utility_pins(char action, uint8_t bits)
+{
+    // Although the pins happen to be grouped together in the current design,
+    // we'll set the bits one at a time, in case we ever reassign them.
+    switch (action) {
+    case 'T':
+    case 't':
+        TRISAbits.TRISA6 = (bits & 0b1000) ? 1 : 0;
+        TRISAbits.TRISA5 = (bits & 0b0100) ? 1 : 0;
+        TRISAbits.TRISA4 = (bits & 0b0010) ? 1 : 0;
+        TRISAbits.TRISA3 = bits & 0b0001;
+        break;
+    case 'O':
+    case 'o':
+        ODCONAbits.ODCA6 = (bits & 0b1000) ? 1 : 0;
+        ODCONAbits.ODCA5 = (bits & 0b0100) ? 1 : 0;
+        ODCONAbits.ODCA4 = (bits & 0b0010) ? 1 : 0;
+        ODCONAbits.ODCA3 = bits & 0b0001;
+        break;
+    case 'W':
+    case 'w':
+        WPUAbits.WPUA6 = (bits & 0b1000) ? 1 : 0;
+        WPUAbits.WPUA5 = (bits & 0b0100) ? 1 : 0;
+        WPUAbits.WPUA4 = (bits & 0b0010) ? 1 : 0;
+        WPUAbits.WPUA3 = bits & 0b0001;
+        break;
+    case 'L':
+    case 'l':
+        LATAbits.LATA6 = (bits & 0b1000) ? 1 : 0;
+        LATAbits.LATA5 = (bits & 0b0100) ? 1 : 0;
+        LATAbits.LATA4 = (bits & 0b0010) ? 1 : 0;
+        LATAbits.LATA3 = bits & 0b0001;
+        break;
+    default:
+        /* do nothing */ ;
+    }
+    return;
+}
+
 // For incoming RS485 comms
 #define NBUFA 80
 char bufA[NBUFA];
@@ -466,7 +522,6 @@ void interpret_RS485_command(char* cmdStr)
     int nchar;
     uint8_t i, j;
     // nchar = printf("DEBUG: cmdStr=%s", cmdStr);
-    if (!override_led) LED = 1; // To indicate start of interpreter activity.
     switch (cmdStr[0]) {
         case 'v':
             nchar = snprintf(bufB, NBUFB, "/0v %s#\n", VERSION_STR);
@@ -510,29 +565,23 @@ void interpret_RS485_command(char* cmdStr)
             nchar = snprintf(bufB, NBUFB, "/0R DAQ_MCU restarted#\n");
             uart1_putstr(bufB);
             break;
-        case 'L':
-            // Turn LED on or off.
-            // Turning the LED on by command overrides its use
-            // as an indicator of interpreter activity.
+        case 'a':
+            // Report the ADC value for the analog signal on the selected pin.
             token_ptr = strtok(&cmdStr[1], sep_tok);
             if (token_ptr) {
-                // Found some non-blank text; assume on/off value.
-                // Use just the least-significant bit.
-                i = (uint8_t) (atoi(token_ptr) & 1);
-                LED = i;
-                override_led = i;
-                nchar = snprintf(bufB, NBUFB, "/0L %d#\n", i);
+                // Found some non-blank text; assume that it is an integer
+                // that specifies which pin to sample.
+                // 0x00  ANA0 (VA/2)
+                // 0x01  C1IN1-/ANA1 (external trigger)
+                // 0x09  C2IN3-/ANB1 (internal trigger)
+                uint8_t pin = (uint8_t)atoi(token_ptr);
+                ADC_select(pin);
+                uint16_t aValue = ADC_read();
+                nchar = snprintf(bufB, NBUFB, "/0a %u#\n", aValue);
             } else {
-                // There was no text to give a value.
-                nchar = snprintf(bufB, NBUFB, "/0L error: no value#\n");
+                nchar = snprintf(bufB, NBUFB, "/0a error: no pin specified#\n");
             }
             uart1_putstr(bufB);
-            break;
-        case 'a': {
-            // Report the ADC value for the analog signal on the comparator input.
-            uint16_t aValue = ADC_read();
-            nchar = snprintf(bufB, NBUFB, "/0a %u#\n", aValue);
-            uart1_putstr(bufB); }
             break;
         case 'e':
             // Enable external trigger, to pull EVENTn line low on the
@@ -598,6 +647,48 @@ void interpret_RS485_command(char* cmdStr)
             uart1_putstr(bufB);
             break;
             break;
+        case 'u':
+            // Interact with the 'utility' pins RA6, RA5, RA4 and RA3.
+            //
+            // The form of the command is
+            // 'u' <action> <bits>
+            // <action> is one of
+            //   'P' read PORT bits (for input; <bits> is not required)
+            //   'T' set TRIS bits (output-drive control 1=input 0=output)
+            //   'O' set ODC bits (open-drain control)
+            //   'W' set WPU bits (weak pull-up)
+            //   'L' set LAT bits (latch for output)
+            // <bits> are mapped to relevant pins as
+            //   bit     7    6    5    4    3    2    1    0
+            //   pin     X    X    X    X  RA6  RA5  RA4  RA3
+            //
+            // Note that the relevant register for each pin will be written
+            // with new data for each call with a write action.
+            // If you want to leave some pins unchanged from their current state,
+            // you will need to send appropriate data.
+            token_ptr = strtok(&cmdStr[1], sep_tok);
+            if (token_ptr) {
+                // Found some non-blank text; assume is is a single character
+                // that specifies the action, as described above.
+                char action = (char) *token_ptr;
+                if (action == 'P' || action == 'p') {
+                    uint8_t bits = read_utility_pins();
+                    nchar = snprintf(bufB, NBUFB, "/0u %c 0x%02x#\n", action, bits);
+                } else {
+                    token_ptr = strtok(NULL, sep_tok);
+                    if (token_ptr) {
+                        uint8_t bits = (uint8_t) atoi(token_ptr);
+                        write_utility_pins(action, bits);
+                        nchar = snprintf(bufB, NBUFB, "/0u %c 0x%02x#\n", action, bits);
+                    } else {
+                        nchar = snprintf(bufB, NBUFB, "/0u error: no bits specified#\n");
+                    }
+                }
+            } else {
+                nchar = snprintf(bufB, NBUFB, "/0u error: no action specified#\n");
+            }
+            uart1_putstr(bufB);
+            break;
         case 'X':
             // Pass through a command to the Pico2 DAQ MCU.
             if (PICO2_READY_PIN) {
@@ -619,7 +710,6 @@ void interpret_RS485_command(char* cmdStr)
             nchar = snprintf(bufB, NBUFB, "/0%c error: Unknown command#\n", cmdStr[0]);
             uart1_putstr(bufB);
     }
-    if (!override_led) LED = 0; // To indicate end of interpreter activity.    
 } // end interpret_RS485_command()
 
 int main(void)
@@ -632,14 +722,6 @@ int main(void)
     uart2_flush_rx(); // Discard any characters already arrived from Pico2 MCU
     FVR_init();
     ADC_init();
-    __delay_ms(10);
-    // Flash LED twice at start-up to indicate that the MCU is ready.
-    for (int8_t i=0; i < 2; ++i) {
-        LED = 1;
-        __delay_ms(250);
-        LED = 0;
-        __delay_ms(250);
-    }
     // Wait until we are reasonably sure that the Pico2 has restarted
     // and then flush the incoming serial buffer.
     __delay_ms(100);
