@@ -8,6 +8,7 @@
 //            comparators 1 and 2 for the internal and external trigger signals.
 // 2025-11-09 Clean up the functions and put them to use.
 // 2025-11-11 Simple hardware trigger function, as used for PIC18F16Q41-COMMS-1.
+// 2025-11-14 Utility pins are available for analog and digital functions.
 //
 // CONFIG1
 #pragma config FEXTOSC = OFF
@@ -75,7 +76,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VERSION_STR "v0.6 PIC18F26Q71 COMMS-3-MCU 2025-11-12"
+#define VERSION_STR "v0.7 PIC18F26Q71 COMMS-3-MCU 2025-11-14"
 
 // Each device on the RS485 network has a unique single-character identity.
 // The master (PC) has identity '0'. Slave nodes may be 1-9A-Za-z.
@@ -91,12 +92,6 @@
 
 void init_pins()
 {
-    // Utility bits RA6, RA5 RA4 and RA3 are all digital.
-    ANSELAbits.ANSELA6 = 0;
-    ANSELAbits.ANSELA5 = 0;
-    ANSELAbits.ANSELA4 = 0;
-    ANSELAbits.ANSELA3 = 0;
-    //
     // RB4 as digital-input for DAQ-MCU Ready/Busy# signal.
     TRISBbits.TRISB4 = 1;
     ANSELBbits.ANSELB4 = 0;
@@ -410,6 +405,13 @@ void write_utility_pins(char action, uint8_t bits)
     // Although the pins happen to be grouped together in the current design,
     // we'll set the bits one at a time, in case we ever reassign them.
     switch (action) {
+    case 'A':
+    case 'a':
+        ANSELAbits.ANSELA6 = (bits & 0b1000) ? 1 : 0;
+        ANSELAbits.ANSELA5 = (bits & 0b0100) ? 1 : 0;
+        ANSELAbits.ANSELA4 = (bits & 0b0010) ? 1 : 0;
+        ANSELAbits.ANSELA3 = bits & 0b0001;
+        break;
     case 'T':
     case 't':
         TRISAbits.TRISA6 = (bits & 0b1000) ? 1 : 0;
@@ -658,6 +660,7 @@ void interpret_RS485_command(char* cmdStr)
             //   'O' set ODC bits (open-drain control)
             //   'W' set WPU bits (weak pull-up)
             //   'L' set LAT bits (latch for output)
+            //   'A' set ANSEL bits (1=analog, 0=digital input buffer)
             // <bits> are mapped to relevant pins as
             //   bit     7    6    5    4    3    2    1    0
             //   pin     X    X    X    X  RA6  RA5  RA4  RA3
