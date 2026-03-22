@@ -9,6 +9,7 @@
 // 2025-11-09 Clean up the functions and put them to use.
 // 2025-11-11 Simple hardware trigger function, as used for PIC18F16Q41-COMMS-1.
 // 2025-11-14 Utility pins are available for analog and digital functions.
+// 2026-03-22 I2C & SPI communication, for interaction with AFE boards.
 //
 // CONFIG1
 #pragma config FEXTOSC = OFF
@@ -73,10 +74,12 @@
 #include <stdlib.h>
 
 #include "uart.h"
+#include "i2c.h"
+#include "spi.h"
 #include <stdio.h>
 #include <string.h>
 
-#define VERSION_STR "v0.7 PIC18F26Q71 COMMS-3-MCU 2025-11-14"
+#define VERSION_STR "v0.8 PIC18F26Q71 COMMS-3-MCU 2026-03-22"
 
 // Each device on the RS485 network has a unique single-character identity.
 // The master (PC) has identity '0'. Slave nodes may be 1-9A-Za-z.
@@ -116,10 +119,13 @@ void init_pins()
     ODCONBbits.ODCB3 = 1;
     LATBbits.LATB3 = 1;
     //
+#   if PCB_REV == 1
     // We will ignore Pico2_EVENT, 
-    // but still set it up as a digital input.
+    // but still set it up as a digital input for PCB revision 1.
+    // It is allocated to other duties for PCB revision 2.
     ANSELAbits.ANSELA7 = 0;
     TRISAbits.TRISA7 = 1;
+#   endif
     //
     return;
 }
@@ -393,10 +399,17 @@ uint8_t read_utility_pins()
     // Although the pins happen to be grouped together in the current design,
     // we'll set the bits one at a time, in case we ever reassign them.
     uint8_t bits = 0;
+#   if PCB_REV == 1
     if (PORTAbits.RA6) bits |= 0b1000;
     if (PORTAbits.RA5) bits |= 0b0100;
     if (PORTAbits.RA4) bits |= 0b0010;
     if (PORTAbits.RA3) bits |= 0b0001;
+#   else
+    if (PORTAbits.RA7) bits |= 0b1000;
+    if (PORTAbits.RA6) bits |= 0b0100;
+    if (PORTAbits.RA5) bits |= 0b0010;
+    if (PORTAbits.RA4) bits |= 0b0001;
+#   endif
     return bits;
 }
 
@@ -407,38 +420,73 @@ void write_utility_pins(char action, uint8_t bits)
     switch (action) {
     case 'A':
     case 'a':
+#       if PCB_REV == 1
         ANSELAbits.ANSELA6 = (bits & 0b1000) ? 1 : 0;
         ANSELAbits.ANSELA5 = (bits & 0b0100) ? 1 : 0;
         ANSELAbits.ANSELA4 = (bits & 0b0010) ? 1 : 0;
         ANSELAbits.ANSELA3 = bits & 0b0001;
+#       else
+        ANSELAbits.ANSELA7 = (bits & 0b1000) ? 1 : 0;
+        ANSELAbits.ANSELA6 = (bits & 0b0100) ? 1 : 0;
+        ANSELAbits.ANSELA5 = (bits & 0b0010) ? 1 : 0;
+        ANSELAbits.ANSELA4 = bits & 0b0001;
+#       endif
         break;
     case 'T':
     case 't':
+#       if PCB_REV == 1
         TRISAbits.TRISA6 = (bits & 0b1000) ? 1 : 0;
         TRISAbits.TRISA5 = (bits & 0b0100) ? 1 : 0;
         TRISAbits.TRISA4 = (bits & 0b0010) ? 1 : 0;
         TRISAbits.TRISA3 = bits & 0b0001;
+#       else
+        TRISAbits.TRISA7 = (bits & 0b1000) ? 1 : 0;
+        TRISAbits.TRISA6 = (bits & 0b0100) ? 1 : 0;
+        TRISAbits.TRISA5 = (bits & 0b0010) ? 1 : 0;
+        TRISAbits.TRISA4 = bits & 0b0001;
+#       endif
         break;
     case 'O':
     case 'o':
+#       if PCB_REV == 1
         ODCONAbits.ODCA6 = (bits & 0b1000) ? 1 : 0;
         ODCONAbits.ODCA5 = (bits & 0b0100) ? 1 : 0;
         ODCONAbits.ODCA4 = (bits & 0b0010) ? 1 : 0;
         ODCONAbits.ODCA3 = bits & 0b0001;
+#       else
+        ODCONAbits.ODCA7 = (bits & 0b1000) ? 1 : 0;
+        ODCONAbits.ODCA6 = (bits & 0b0100) ? 1 : 0;
+        ODCONAbits.ODCA5 = (bits & 0b0010) ? 1 : 0;
+        ODCONAbits.ODCA4 = bits & 0b0001;
+#       endif
         break;
     case 'W':
     case 'w':
+#       if PCB_REV == 1
         WPUAbits.WPUA6 = (bits & 0b1000) ? 1 : 0;
         WPUAbits.WPUA5 = (bits & 0b0100) ? 1 : 0;
         WPUAbits.WPUA4 = (bits & 0b0010) ? 1 : 0;
         WPUAbits.WPUA3 = bits & 0b0001;
+#       else
+        WPUAbits.WPUA7 = (bits & 0b1000) ? 1 : 0;
+        WPUAbits.WPUA6 = (bits & 0b0100) ? 1 : 0;
+        WPUAbits.WPUA5 = (bits & 0b0010) ? 1 : 0;
+        WPUAbits.WPUA4 = bits & 0b0001;
+#       endif
         break;
     case 'L':
     case 'l':
+#       if PCB_REV == 1
         LATAbits.LATA6 = (bits & 0b1000) ? 1 : 0;
         LATAbits.LATA5 = (bits & 0b0100) ? 1 : 0;
         LATAbits.LATA4 = (bits & 0b0010) ? 1 : 0;
         LATAbits.LATA3 = bits & 0b0001;
+#       else
+        LATAbits.LATA7 = (bits & 0b1000) ? 1 : 0;
+        LATAbits.LATA6 = (bits & 0b0100) ? 1 : 0;
+        LATAbits.LATA5 = (bits & 0b0010) ? 1 : 0;
+        LATAbits.LATA4 = bits & 0b0001;
+#       endif
         break;
     default:
         /* do nothing */ ;
@@ -455,6 +503,11 @@ char bufB[NBUFB];
 // For incoming AVR responses
 #define NBUFC 256
 char bufC[NBUFC];
+// For I2C and SPI communication with AFE boards
+#define NBUF_AFE 32
+uint8_t buf_AFE[NBUF_AFE];
+#define NBUF_DIGITS 8
+char buf_digits[NBUF_DIGITS];
 
 int find_char(char* buf, int start, int end, char c)
 // Returns the index of the character if found, -1 otherwise.
@@ -663,7 +716,8 @@ void interpret_RS485_command(char* cmdStr)
             //   'A' set ANSEL bits (1=analog, 0=digital input buffer)
             // <bits> are mapped to relevant pins as
             //   bit     7    6    5    4    3    2    1    0
-            //   pin     X    X    X    X  RA6  RA5  RA4  RA3
+            //   pin     X    X    X    X  RA6  RA5  RA4  RA3  <-- REV 1 PCB
+            //   pin     X    X    X    X  RA7  RA6  RA5  RA4  <-- REV 2 PCB
             //
             // Note that the relevant register for each pin will be written
             // with new data for each call with a write action.
@@ -689,6 +743,218 @@ void interpret_RS485_command(char* cmdStr)
                 }
             } else {
                 nchar = snprintf(bufB, NBUFB, "/0u error: no action specified#\n");
+            }
+            uart1_putstr(bufB);
+            break;
+        case 'b':
+            // Read or write data bytes to the AFE board, via the I2C1 module.
+            // The form of the command is
+            // 'b' <action> <addr7bit> <nbytes> <byte0> <byte1> ...
+            // <action> is one of 'w' or 'r'
+            // <addr7bit> is the 7-bit address of the I2C slave device
+            // <nbytes> is the number of bytes to read or write
+            // <byte0> <byte1> ... are the bytes to write
+            token_ptr = strtok(&cmdStr[1], sep_tok);
+            if (token_ptr) {
+                // Found some non-blank text; assume is is a single character
+                // that specifies the action, as described above.
+                char action = (char) *token_ptr;
+                if (action == 'R' || action == 'r') {
+                    token_ptr = strtok(NULL, sep_tok);
+                    if (token_ptr) {
+                        uint8_t addr7bit = (uint8_t) atoi(token_ptr);
+                        token_ptr = strtok(NULL, sep_tok);
+                        if (token_ptr) {
+                            uint8_t nbytes = (uint8_t) atoi(token_ptr);
+                            if (nbytes > NBUF_AFE) nbytes = NBUF_AFE;
+                            for (uint8_t j=0; j < NBUF_AFE; ++j) { buf_AFE[j] = 0; }
+                            nbytes = i2c1_read(addr7bit, nbytes, buf_AFE, 30);
+                            if (nbytes > 0) {
+                                // Successfully read some bytes, so assemble response.
+                                nchar = snprintf(bufB, NBUFB, "/0b r %d %d", addr7bit, nbytes);
+                                for (uint8_t j=0; j < nbytes; ++j) {
+                                    nchar = snprintf(buf_digits, NBUF_DIGITS, " %d", buf_AFE[j]);
+                                    strncat(bufB, buf_digits, NBUF_DIGITS);
+                                }
+                                nchar = snprintf(buf_digits, NBUF_DIGITS, "#\n");
+                                strncat(bufB, buf_digits, NBUF_DIGITS);
+                            } else {
+                                nchar = snprintf(bufB, NBUFB,
+                                                 "/0b r %d %d error: no bytes read#\n",
+                                                 addr7bit, nbytes);                                
+                            }
+                        } else {
+                            nchar = snprintf(bufB, NBUFB,
+                                             "/0b r %d error: nbytes not specified#\n",
+                                             addr7bit);
+                        }
+                    } else {
+                        nchar = snprintf(bufB, NBUFB, "/0b r error: address not specified#\n");
+                    }
+                } else if (action == 'W' || action == 'w') {
+                    token_ptr = strtok(NULL, sep_tok);
+                    if (token_ptr) {
+                        uint8_t addr7bit = (uint8_t) atoi(token_ptr);
+                        token_ptr = strtok(NULL, sep_tok);
+                        if (token_ptr) {
+                            uint8_t nbytes = (uint8_t) atoi(token_ptr);
+                            if (nbytes > 0) {
+                                if (nbytes > NBUF_AFE) nbytes = NBUF_AFE;
+                                for (uint8_t j=0; j < NBUF_AFE; ++j) { buf_AFE[j] = 0; }
+                                // Get the data bytes from the RS485 message.
+                                for (uint8_t j=0; j < nbytes; ++j) {
+                                    token_ptr = strtok(NULL, sep_tok);
+                                    if (token_ptr) {
+                                        buf_AFE[j] = (uint8_t) atoi(token_ptr);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                // Attempt to write those bytes to the I2C slave.
+                                uint8_t nbytes_written = i2c1_write(addr7bit, nbytes, buf_AFE, 30);
+                                if (nbytes_written == nbytes) {
+                                    // Assemble RS485 response from the bytes successfully written.
+                                    nchar = snprintf(bufB, NBUFB, "/0b w %d %d", addr7bit, nbytes);
+                                    for (uint8_t j=0; j < nbytes; ++j) {
+                                        nchar = snprintf(buf_digits, NBUF_DIGITS, " %d", buf_AFE[j]);
+                                        strncat(bufB, buf_digits, NBUF_DIGITS);
+                                    }
+                                    nchar = snprintf(buf_digits, NBUF_DIGITS, "#\n");
+                                    strncat(bufB, buf_digits, NBUF_DIGITS);
+                                } else {
+                                    nchar = snprintf(bufB, NBUFB,
+                                                     "/0b w %d %d error: not all bytes written#\n",
+                                                     addr7bit, nbytes_written);
+                                }
+                            } else {
+                                nchar = snprintf(bufB, NBUFB,
+                                                 "/0b w %d %d error: no bytes to write#\n",
+                                                 addr7bit, nbytes);                                
+                            }
+                        } else {
+                            nchar = snprintf(bufB, NBUFB,
+                                             "/0b w %d error: nbytes not specified#\n",
+                                             addr7bit);
+                        }
+                    } else {
+                        nchar = snprintf(bufB, NBUFB, "/0b w error: address not specified#\n");
+                    }
+                } else {
+                    nchar = snprintf(bufB, NBUFB, "/0b error: action is not read nor write#\n");
+                }
+            } else {
+                nchar = snprintf(bufB, NBUFB, "/0b error: no read/write action specified#\n");
+            }
+            uart1_putstr(bufB);
+            break;
+        case 'c':
+            // Read or write data bytes to the AFE board, via SPI.
+            // The form of the command is one of:
+            // 'c' 'i' <upin> <ckp> <cke> <smp>
+            // 'c' 'e' <nbytes> <byte0> <byte1> ...
+            // 'c' 'c'
+            // where
+            // <upin> specifies which utility pin 0,1,2,3 to use for slave-select
+            // <ckp> is clock polarity (1=idle state is high level)
+            // <cke> is clock edge for data output (0=output on idle to active)
+            // <smp> is the input sampling point (0=mid of data output time)
+            // <nbytes> is the number of bytes to read or write
+            // <byte0> <byte1> ... are the bytes to write
+            token_ptr = strtok(&cmdStr[1], sep_tok);
+            if (token_ptr) {
+                // Found some non-blank text; assume is is a single character
+                // that specifies the action, as described above.
+                char action = (char) *token_ptr;
+                if (action == 'I' || action == 'i') {
+                    // Initialize the SPI module with a specific mode details
+                    // and selecting a specific slave device via a GPIO pin.
+                    token_ptr = strtok(NULL, sep_tok);
+                    if (token_ptr) {
+                        uint8_t upin = (uint8_t) (atoi(token_ptr) & 0b11);
+                        token_ptr = strtok(NULL, sep_tok);
+                        if (token_ptr) {
+                            uint8_t ckp = (uint8_t) (atoi(token_ptr) & 1);
+                            token_ptr = strtok(NULL, sep_tok);
+                            if (token_ptr) {
+                                uint8_t cke = (uint8_t) (atoi(token_ptr) & 1);
+                                token_ptr = strtok(NULL, sep_tok);
+                                if (token_ptr) {
+                                    uint8_t smp = (uint8_t) (atoi(token_ptr) & 1);
+                                    spi1_init(upin, ckp, cke, smp);
+                                    nchar = snprintf(bufB, NBUFB, "/0c i %d %d %d %d#\n",
+                                                     upin, ckp, cke, smp);
+                                } else {
+                                    nchar = snprintf(bufB, NBUFB,
+                                                     "/0c i %d %d %d error: smp not specified#\n",
+                                                     upin, ckp, cke);
+                                }
+                            } else {
+                                nchar = snprintf(bufB, NBUFB,
+                                                 "/0c i %d %d error: cke smp not specified#\n",
+                                                 upin, ckp);
+                            }
+                        } else {
+                            nchar = snprintf(bufB, NBUFB,
+                                             "/0c i %d error: ckp cke smp not specified#\n",
+                                             upin);
+                        }
+                    } else {
+                        nchar = snprintf(bufB, NBUFB,
+                                         "/0c i error: upin ckp cke smp not specified#\n");
+                    }
+                } else if (action == 'E' || action == 'e') {
+                    // Exchange a number of bytes with the selected device.
+                    token_ptr = strtok(NULL, sep_tok);
+                    if (token_ptr) {
+                        uint8_t nbytes = (uint8_t) atoi(token_ptr);
+                        if (nbytes > 0) {
+                            if (nbytes > NBUF_AFE) nbytes = NBUF_AFE;
+                            for (uint8_t j=0; j < NBUF_AFE; ++j) { buf_AFE[j] = 0; }
+                            // Get the data bytes from the RS485 message.
+                            for (uint8_t j=0; j < nbytes; ++j) {
+                                token_ptr = strtok(NULL, sep_tok);
+                                if (token_ptr) {
+                                    buf_AFE[j] = (uint8_t) atoi(token_ptr);
+                                } else {
+                                    break;
+                                }
+                            }
+                            // Attempt to write those bytes to the SPI slave.
+                            uint8_t nbytes_written = spi1_exchange(nbytes, buf_AFE);
+                            if (nbytes_written == nbytes) {
+                                // Assemble RS485 response from the bytes successfully written.
+                                nchar = snprintf(bufB, NBUFB, "/0c e %d", nbytes);
+                                for (uint8_t j=0; j < nbytes; ++j) {
+                                    nchar = snprintf(buf_digits, NBUF_DIGITS, " %d", buf_AFE[j]);
+                                    strncat(bufB, buf_digits, NBUF_DIGITS);
+                                }
+                                nchar = snprintf(buf_digits, NBUF_DIGITS, "#\n");
+                                strncat(bufB, buf_digits, NBUF_DIGITS);
+                            } else {
+                                nchar = snprintf(bufB, NBUFB,
+                                                 "/0c e %d error: not all bytes exchanged#\n",
+                                                 nbytes_written);
+                            }
+                        } else {
+                            nchar = snprintf(bufB, NBUFB,
+                                             "/0c e %d error: no bytes to exchange#\n",
+                                             nbytes);                                
+                        }
+                    } else {
+                        nchar = snprintf(bufB, NBUFB,
+                                         "/0c e error: nbytes not specified#\n");
+                    }
+                } else if (action == 'C' || action == 'c') {
+                    // Close the SPI module.
+                    spi1_close();
+                    nchar = snprintf(bufB, NBUFB, "/0c c#\n");
+                } else {
+                    nchar = snprintf(bufB, NBUFB,
+                                     "/0c error: action is not init, exchange or close#\n");
+                }
+            } else {
+                nchar = snprintf(bufB, NBUFB,
+                                 "/0c error: no init/exchange/close action specified#\n");
             }
             uart1_putstr(bufB);
             break;
@@ -725,6 +991,7 @@ int main(void)
     uart2_flush_rx(); // Discard any characters already arrived from Pico2 MCU
     FVR_init();
     ADC_init();
+    i2c1_init();
     // Wait until we are reasonably sure that the Pico2 has restarted
     // and then flush the incoming serial buffer.
     __delay_ms(100);
@@ -748,6 +1015,7 @@ int main(void)
     }
     disable_hardware_trigger();
     release_event_pin();
+    i2c1_close();
     ADC_close();
     FVR_close();
     uart2_flush_rx();
